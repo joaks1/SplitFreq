@@ -319,11 +319,130 @@ class Manager(multiprocessing.Process):
             finished.extend(w_list)
         return finished
 
-class SplitFreqWorker(object):
+class SplitManager(object):
+    count = 0
+    def __init__(self, tree_path_lists,
+            num_processors = 2,
+            schema = 'nexus/newick',
+            is_rooted = False,
+            tree_offset = 0):
+        self.__class__.count += 1
+        self.name = self.__class__.__name__ + '-' + str(self.count)
+        self.tree_path_collections = tree_path_lists
+        self.num_comparisons = len(self.tree_path_collections)
+        self.num_processors = num_processors
+        self.schema = schema
+        self.taxon_set = None
+        self.is_rooted = is_rooted
+        self.split_distributions = []
+        self.split_frequencies_list = None
+        self.split_frequencies = {}
+        self.tree_offset = tree_offset
+        self.plots = []
+        self.n = [0 for i in range(self.num_comparisons)]
+        self.workers = []
+        for collection_idx, tree_paths in enumerate(self.tree_path_collections):
+            self.split_distributions.append(dendropy.treesplit.SplitDistribution(
+                    taxon_set = self.taxon_set))
+            for file_idx, path in enumerate(tree_paths):
+                self.workers.append(SplitWorker([path],
+                        schema = self.schema,
+                        is_rooted = self.is_rooted,
+                        tree_offset = tree_offset,
+                        tag = collection_idx))
+
+    def run_workers(self):
+        self.workers = Manager.run_workers(self.workers,
+                num_processors = self.num_processors)
+        for w in self.workers:
+            if self.taxon_set is None:
+                self.taxon_set = copy.deepcopy(w.taxon_set)
+            assert (sorted(self.taxon_set.labels()) == 
+                    sorted(w.taxon_set.labels()))
+            self.split_distributions[w.tag].update(w.split_distribution)
+            self.n[w.tag] += w.n
+        self._populate_split_frequencies_list()
+        self._merge_split_frequencies()
+
+    def _populate_split_frequencies_list(self):
+        self.split_frequencies_list = []
+        for split_dist in self.split_distributions:
+            self.split_frequencies_list.append(split_dist.split_frequencies)
+    
+    def _merge_split_frequencies(self):
+        keys = set()
+        for split_freqs in self.split_frequencies_list:
+            keys.update((split for split, freq in split_freqs.iteritems()))
+        for k in keys:
+            self.split_frequencies[k] = []
+            for collection_idx, split_freqs in enumerate(
+                    self.split_frequencies_list):
+                self.split_frequencies[k].append(split_freqs.get(k, 0.0))
+
+    def write_split_frequencies(self, stream):
+        stream.write('split\t{0}\n'.format('\t'.join(
+                ('freq{0}'.format(i+1) for i in range(self.num_comparisons)))))
+        for split, freqs in self.pretty_split_iter():
+            stream.write('{0}\t{1}\n'.format(split, '\t'.join(
+                    (str(f) for f in freqs))))
+            
+    def pretty_split_iter(self):
+        for split, freqs in self.split_frequencies.iteritems():
+            pretty_split = dendropy.treesplit.split_as_string_rev(split,
+                    width = len(self.taxon_set),
+                    symbol1 = '0', symbol2 = '1')
+            yield pretty_split, freqs
+
+    def pairwise_split_freq_iter(self, i, j):
+        for split, freqs in self.split_frequencies.iteritems():
+            if ((freqs[i] > 0.0) and (freqs[j] > 0.0)):
+                yield freqs[i], freqs[j]
+
+    def plot_iter(self):
+        if not MATPLOTLIB_AVAILABLE:
+            return
+        for i in range(self.num_comparisons):
+            for j in range(i+1, self.num_comparisons):
+                x = []
+                y = []
+                for freq1, freq2 in self.pairwise_split_freq_iter(i, j):
+                    x.append(freq1)
+                    y.append(freq2)
+                ticks = [n / 10.0 for n in range(11)]
+                tick_labels = []
+                for idx, t in enumerate(ticks):
+                    if idx % 2 == 0:
+                        tick_labels.append(t)
+                    else:
+                        tick_labels.append('')
+                sp = ScatterPlot(
+                        x = x,
+                        y = y,
+                        x_label = 'Split frequencies {0}'.format(i+1),
+                        y_label = 'Split frequencies {0}'.format(j+1),
+                        x_label_size = 16.0,
+                        y_label_size = 16.0,
+                        height = 4.0,
+                        width = 6.0,
+                        xlim = (0, 1.0),
+                        ylim = (0, 1.0),
+                        perimeter_padding = 0.2,
+                        margin_left = 0,
+                        margin_right = 1,
+                        margin_bottom = 0,
+                        margin_top = 1,
+                        xticks = ticks,
+                        xtick_labels = tick_labels,
+                        xtick_label_size = 12.0,
+                        yticks = ticks,
+                        ytick_labels = tick_labels,
+                        ytick_label_size = 12.0)
+                yield i, j, sp
+
+class SplitWorker(object):
     count = 0
     def __init__(self, list_of_tree_file_paths,
             schema = 'nexus/newick',
-            taxon_set = None,
             is_rooted = False,
             tree_offset = 0,
             tag = None):
@@ -332,19 +451,15 @@ class SplitFreqWorker(object):
         self.paths = list_of_tree_file_paths
         self.schema = schema
         self.taxon_set = dendropy.TaxonSet()
-        if isinstance(taxon_set, dendropy.TaxonSet):
-            self.taxon_set = copy.deepcopy(taxon_set)
-            self.taxon_set.sort(key=lambda taxonobject: taxonobject.label)
         self.is_rooted = is_rooted
-        self.split_frequencies = {}
+        self.split_distribution = dendropy.treesplit.SplitDistribution(
+                taxon_set = self.taxon_set)
         self.tree_offset = tree_offset
         self.tag = tag
         self.n = 0
         self.finished = False
 
     def start(self):
-        split_dist = dendropy.treesplit.SplitDistribution(
-                taxon_set = self.taxon_set)
         for tree_file_num, tree_file in enumerate(self.paths):
             stream = open(tree_file, 'r')
             tree_iter = dendropy.dataio.ioclient.tree_source_iter(stream,
@@ -355,15 +470,9 @@ class SplitFreqWorker(object):
                     preserve_underscores=True)
             for tree_num, tree in enumerate(tree_iter):
                 dendropy.treesplit.encode_splits(tree)
-                split_dist.count_splits_on_tree(tree)
+                self.split_distribution.count_splits_on_tree(tree)
                 self.n += 1
             stream.close()
-        split_freqs = split_dist.split_frequencies
-        for split, freq in split_freqs.iteritems():
-            pretty_split = dendropy.treesplit.split_as_string_rev(split,
-                    width = len(split_dist.taxon_set),
-                    symbol1 = '0', symbol2 = '1')
-            self.split_frequencies[pretty_split] = freq
         self.finished = True
 
 def list_splitter(l, n, by_size=False):
@@ -387,21 +496,18 @@ def list_splitter(l, n, by_size=False):
             yield l[i:i+step_size]
         yield l[i+step_size:]
 
-def merge_split_frequencies(split_freq_worker_1, split_freq_worker_2):
-    assert (sorted(split_freq_worker_1.taxon_set.labels()) == 
-            sorted(split_freq_worker_2.taxon_set.labels()))
-    keys = list(set(split_freq_worker_1.split_frequencies.keys() +
-            split_freq_worker_2.split_frequencies.keys()))
-    splits = {}
-    for k in keys:
-        splits[k] = (split_freq_worker_1.split_frequencies.get(k, 0.0),
-                split_freq_worker_2.split_frequencies.get(k, 0.0))
-    return splits
-
-def write_split_freqs(split_freqs, stream = sys.stdout):
-    stream.write('split\tfreq1\tfreq2\n')
-    for k, (freq1, freq2) in split_freqs.iteritems():
-        stream.write('{0}\t{1}\t{2}\n'.format(k, freq1, freq2))
+def get_unique_path(path, max_attempts = 1000):
+    path = os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
+    if not os.path.exists(path):
+        return path
+    attempt = 0
+    while True:
+        p = '-'.join([path, str(attempt)])
+        if not os.path.exists(p):
+            return p
+        if attempt >= max_attempts:
+            raise Exception('failed to get unique path')
+        attempt += 1
 
 def expand_path(path):
     return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
@@ -412,6 +518,15 @@ def arg_is_file(path):
             raise
     except:
         msg = '{0!r} is not a file'.format(path)
+        raise argparse.ArgumentTypeError(msg)
+    return expand_path(path)
+
+def arg_is_dir(path):
+    try:
+        if not os.path.isdir(path):
+            raise
+    except:
+        msg = '{0!r} is not a directory'.format(path)
         raise argparse.ArgumentTypeError(msg)
     return expand_path(path)
 
@@ -427,13 +542,9 @@ def arg_is_nonnegative_int(i):
 def main_cli():
     description = '{name} {version}'.format(**_program_info)
     parser = argparse.ArgumentParser(description = description)
-    parser.add_argument('-a', '--tree-files-a',
-            metavar='INPUT-TREE-FILE-A',
-            nargs = '+',
-            type = arg_is_file,
-            help = ('Input tree file(s) to be compared.'))
-    parser.add_argument('-b', '--tree-files-b',
-            metavar='INPUT-TREE-FILE-B',
+    parser.add_argument('-t', '--tree-paths',
+            action = 'append',
+            metavar = 'INPUT-TREE-FILE',
             nargs = '+',
             type = arg_is_file,
             help = ('Input tree file(s) to be compared.'))
@@ -442,78 +553,69 @@ def main_cli():
             default = 0,
             help = ('The number of trees to ignore from the beginning of each '
                     'input file.'))
-    parser.add_argument('-p', '--plot-path',
+    parser.add_argument('-o', '--output-dir',
             type = str,
-            help = ('Output path for split-frequency plot. Requires '
-                    'matplotlib.'))
+            default = os.getcwd(),
+            help = ('Output directory for split-frequency plots. Default is '
+                    'the current working directory'))
+    parser.add_argument('--np',
+            action = 'store',
+            type = arg_is_nonnegative_int,
+            default = multiprocessing.cpu_count(),
+            help = ('The maximum number of processes to run in parallel. The '
+                    'default is the number of CPUs available on the machine.'))
+    parser.add_argument('--debug',
+            action = 'store_true',
+            help = 'Run in debugging mode.')
 
     args = parser.parse_args()
 
     ##########################################################################
     ## handle args
 
-    workers = []
-    workers.append(SplitFreqWorker(args.tree_files_a,
-            tree_offset = args.burnin,
-            tag = 'a'))
-    workers.append(SplitFreqWorker(args.tree_files_b,
-            tree_offset = args.burnin,
-            tag = 'b'))
-    _LOG.info("Counting split frequencies from tree files...")
-    workers = Manager.run_workers(workers, num_processors = 2)
-    sfwa, sfwb = None, None
-    for w in workers:
-        if w.tag == 'a':
-            sfwa = w
-        elif w.tag == 'b':
-            sfwb = w
-        else:
-            raise Exception('Unexpected worker tag')
+    _LOG.setLevel(logging.INFO)
+    if args.debug:
+        _LOG.setLevel(logging.DEBUG)
 
-    _LOG.info("Merging split frequences...")
-    splits = merge_split_frequencies(sfwa, sfwb)
-    write_split_freqs(splits)
+    if not len(args.tree_paths) > 1:
+        _LOG.error('Multiple tree collections (specified with `-t`) are '
+                'required')
+        sys.stderr.write(str(parser.print_help()))
+        sys.exit(1)
+    
+    num_tree_paths = 0
+    for paths in args.tree_paths:
+        num_tree_paths += len(paths)
 
-    if args.plot_path:
-        if not MATPLOTLIB_AVAILABLE:
-            _LOG.warning(
-                    '`matplotlib` could not be imported, so the plot can not\n'
-                    'be produced. The data to create the plot was written to\n'
-                    'standard output.')
-            sys.exit(0)
-        ticks = [x / 10.0 for x in range(11)]
-        tick_labels = []
-        for i, t in enumerate(ticks):
-            if i % 2 == 0:
-                tick_labels.append(t)
-            else:
-                tick_labels.append('')
-        keys = sorted(splits.keys())
-        x = [splits[k][0] for k in keys]
-        y = [splits[k][1] for k in keys]
-        sp = ScatterPlot(
-                x = x,
-                y = y,
-                x_label = 'Split frequencies a',
-                y_label = 'Split frequencies b',
-                x_label_size = 16.0,
-                y_label_size = 16.0,
-                height = 4.0,
-                width = 6.0,
-                xlim = (0, 1.0),
-                ylim = (0, 1.0),
-                perimeter_padding = 0.2,
-                margin_left = 0,
-                margin_right = 1,
-                margin_bottom = 0,
-                margin_top = 1,
-                xticks = ticks,
-                xtick_labels = tick_labels,
-                xtick_label_size = 12.0,
-                yticks = ticks,
-                ytick_labels = tick_labels,
-                ytick_label_size = 12.0)
-        sp.savefig(args.plot_path)
+    args.np = min([args.np, num_tree_paths])
+
+    _LOG.info('Assembling split workers...')
+    split_manager = SplitManager(tree_path_lists = args.tree_paths,
+            num_processors = args.np,
+            tree_offset = args.burnin)
+    _LOG.info('Running split workers...')
+    split_manager.run_workers()
+    _LOG.debug('\n{0}\n\n'.format(split_manager.n))
+    split_manager.write_split_frequencies(sys.stdout)
+
+    if not MATPLOTLIB_AVAILABLE:
+        _LOG.warning(
+                '`matplotlib` could not be imported, so the plots can not\n'
+                'be produced. The data to create the plots was written to\n'
+                'standard output.')
+        sys.exit(0)
+
+    plot_dir = get_unique_path(
+            os.path.join(args.output_dir, 'split-freq-plots'))
+    os.mkdir(plot_dir)
+    _LOG.info('Generating plots...')
+    for i, j, plot in split_manager.plot_iter():
+        path = os.path.join(plot_dir, 'trees{0}-vs-trees{1}.pdf'.format(
+            i + 1, j + 1))
+        if os.path.exists(path):
+            _LOG.error('Plot path {0} already exists... Aborting'.format(path))
+            sys.exit(1)
+        plot.savefig(path)
 
 if __name__ == '__main__':
     main_cli()
