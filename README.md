@@ -66,7 +66,7 @@ two collections of trees using:
 
 Note, all of the trees in both files must have the same set of taxa! If all
 went well, the script should have output the split frequencies to the terminal
-screen, and, if `matplotlib was found, the plot
+screen, and, if `matplotlib` was found, the plot
 `split-freq-plots/trees1-vs-trees2.pdf` was created.
 
 Having all those split frequencies written to the screen is annoying, so let's
