@@ -5,6 +5,7 @@ Table of Contents
  -  [Requirements](#requirements)
  -  [Installation](#installation)
  -  [Documentation](#documentation)
+ -  [Acknowledgements](#acknowledgements)
  -  [License](#license)
 
 Overview
@@ -61,19 +62,49 @@ If you have a collection of trees in file `TREE-FILE-A` and another collection
 of trees in `TREE-FILE-B`, you can compare the split frequencies between these
 two collections of trees using:
 
-    split-freq.py -a TREE-FILE-A -b TREE_FILE-B
+    split-freq.py -t TREE-FILE-A -t TREE_FILE-B
 
-Note, all of the trees in both files must have the same set of taxa!
+Note, all of the trees in both files must have the same set of taxa! If all
+went well, the script should have output the split frequencies to the terminal
+screen, and, if `matplotlib was found, the plot
+`split-freq-plots/trees1-vs-trees2.pdf` was created.
+
+Having all those split frequencies written to the screen is annoying, so let's
+redirect all that standard output to a file named `freqs.txt`:
+
+    split-freq.py -t TREE-FILE-A -t TREE_FILE-B > freqs.txt
 
 If you want to ignore 100 trees at the beginning of each file you can use:
 
-    split-freq.py --burnin 100 -a TREE-FILE-A -b TREE_FILE-B
+    split-freq.py --burnin 100 -t TREE-FILE-A -t TREE_FILE-B > freqs.txt
 
-If you want to create a plot of the comparison named `split-freq-plot.pdf` use:
+Let's move on to a slightly more involved example. Let's say we want to compare
+the split frequencies of two different models, and we have run 4 independent
+analyses under each model in MrBayes. So, we have the following eight files,
+each with samples of trees
 
-    split-freq.py --burnin 100 -a TREE-FILE-A -b TREE_FILE-B -p split-freq-plot.pdf
+    model1-run1.t
+    model1-run2.t
+    model1-run3.t
+    model1-run4.t
+    model2-run1.t
+    model2-run2.t
+    model2-run3.t
+    model2-run4.t
 
-You must have `matplotlib` installed to create the plot.
+To compare the split frequencies of the models while removing the first 1000
+sampled trees from each file, we can use:
+
+    split-freq.py --burnin 1000 -t model2-run1.t model2-run2.t model2-run3.t model2-run4.t -t model2-run1.t model2-run2.t model2-run3.t model2-run4.t > freqs.txt
+
+That's a lot of typing, but we can accomplish the same command a lot more
+succinctly by taking advantage of shell wildcards:
+
+    split-freq.py --burnin 1000 -t model1-run?.t -t model2-run?.t > freqs.txt
+
+Having trees in separate files like this can speed things up considerably,
+because `split-freq.py` can use as many processors as the number of files it is
+provided.
 
 Acknowledgements
 ================
