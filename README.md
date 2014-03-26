@@ -13,6 +13,9 @@ Overview
 The Python script `split-freq.py` provides a command-line interface (CLI) for
 comparing split frequencies between collections of trees.
 
+NOTE: This script is not well tested, so double check your results and please
+let me know if you have problems.
+
 Requirements
 ============
 
@@ -20,8 +23,8 @@ The script requires Python (only tested under version 2.7) and the Python
 package [`DendroPy`](http://pythonhosted.org/DendroPy/)
 (<http://pythonhosted.org/DendroPy/>):
 
-    > Sukumaran, J. and M.T. Holder. 2010. DendroPy: A Python library for
-    > phylogenetic computint. Bioninformatics 26: 1569--1571.
+> Sukumaran, J. and M.T. Holder. 2010. DendroPy: A Python library for
+> phylogenetic computint. Bioninformatics 26: 1569--1571.
 
 Also, if you want to plot comparisons of split frequencies, you will also need
 the Python plotting library [`matplotlib`](http://matplotlib.org/)
