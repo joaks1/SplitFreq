@@ -342,8 +342,10 @@ class SplitManager(object):
         self.n = [0 for i in range(self.num_comparisons)]
         self.workers = []
         for collection_idx, tree_paths in enumerate(self.tree_path_collections):
-            self.split_distributions.append(dendropy.treesplit.SplitDistribution(
-                    taxon_set = self.taxon_set))
+            sd = dendropy.treesplit.SplitDistribution(
+                    taxon_set = self.taxon_set)
+            sd.is_rooted = self.is_rooted
+            self.split_distributions.append(sd)
             for file_idx, path in enumerate(tree_paths):
                 self.workers.append(SplitWorker([path],
                         schema = self.schema,
@@ -454,6 +456,7 @@ class SplitWorker(object):
         self.is_rooted = is_rooted
         self.split_distribution = dendropy.treesplit.SplitDistribution(
                 taxon_set = self.taxon_set)
+        self.split_distribution.is_rooted = is_rooted
         self.tree_offset = tree_offset
         self.tag = tag
         self.n = 0
@@ -564,6 +567,9 @@ def main_cli():
             default = multiprocessing.cpu_count(),
             help = ('The maximum number of processes to run in parallel. The '
                     'default is the number of CPUs available on the machine.'))
+    parser.add_argument('-r', '--rooted',
+            action = 'store_true',
+            help = 'Treat trees as rooted.')
     parser.add_argument('--debug',
             action = 'store_true',
             help = 'Run in debugging mode.')
@@ -592,6 +598,7 @@ def main_cli():
     _LOG.info('Assembling split workers...')
     split_manager = SplitManager(tree_path_lists = args.tree_paths,
             num_processors = args.np,
+            is_rooted = args.rooted,
             tree_offset = args.burnin)
     _LOG.info('Running split workers...')
     split_manager.run_workers()
