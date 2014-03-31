@@ -548,7 +548,7 @@ def main_cli():
             nargs = '+',
             type = arg_is_file,
             help = ('Input tree file(s) to be compared.'))
-    parser.add_argument('--burnin',
+    parser.add_argument('-b', '--burnin',
             type = arg_is_nonnegative_int,
             default = 0,
             help = ('The number of trees to ignore from the beginning of each '
